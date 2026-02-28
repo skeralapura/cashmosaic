@@ -102,13 +102,19 @@ export function useUpload() {
       const parsed = applyMapping(allData, mapping);
 
       // Load exclusion rules and category rules from Supabase
-      const [{ data: exclusionRules }, { data: globalRules }, { data: userRules }, { data: categories }] =
-        await Promise.all([
-          supabase.from('exclusion_rules').select('*').eq('user_id', user.id),
-          supabase.from('category_rules').select('*').is('user_id', null),
-          supabase.from('category_rules').select('*').eq('user_id', user.id),
-          supabase.from('categories').select('*'),
-        ]);
+      const [
+        { data: exclusionRules, error: err1 },
+        { data: globalRules, error: err2 },
+        { data: userRules, error: err3 },
+        { data: categories, error: err4 },
+      ] = await Promise.all([
+        supabase.from('exclusion_rules').select('*').eq('user_id', user.id),
+        supabase.from('category_rules').select('*').is('user_id', null),
+        supabase.from('category_rules').select('*').eq('user_id', user.id),
+        supabase.from('categories').select('*'),
+      ]);
+      const dbError = err1 ?? err2 ?? err3 ?? err4;
+      if (dbError) throw new Error(`Database error: ${dbError.message}`);
 
       const sortedRules = buildSortedRules(
         (globalRules ?? []) as CategoryRule[],
@@ -205,7 +211,7 @@ export function useUpload() {
 
       updateState({ processed, preview, accountId, error: null });
     } catch (err) {
-      updateState({ error: `Processing failed: ${(err as Error).message}` });
+      updateState({ step: 'mapping', error: `Processing failed: ${(err as Error).message}` });
     }
   }, [state.file, state.accountId, user, updateState]);
 
@@ -239,7 +245,7 @@ export function useUpload() {
 
         const { error } = await supabase
           .from('transactions')
-          .upsert(rows, { onConflict: 'row_hash', ignoreDuplicates: true });
+          .upsert(rows, { onConflict: 'user_id,row_hash', ignoreDuplicates: true });
 
         if (error) throw error;
         imported += batch.length;
@@ -264,7 +270,7 @@ export function useUpload() {
             column_mapping: state.mapping,
             row_hash: tx.rowHash,
           })),
-          { onConflict: 'row_hash', ignoreDuplicates: true }
+          { onConflict: 'user_id,row_hash', ignoreDuplicates: true }
         );
       }
 

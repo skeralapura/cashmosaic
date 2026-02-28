@@ -33,7 +33,9 @@ export function useTransactions(filters: TransactionFilters = {}) {
         query = query.in('category_id', filters.categoryIds);
       }
       if (filters.search) {
-        query = query.ilike('description', `%${filters.search}%`);
+        // Replace spaces with % so "APA TREAS 310" matches "APA  TREAS  310..." (multiple spaces in DB)
+        const ilikePattern = '%' + filters.search.split(/\s+/).join('%') + '%';
+        query = query.ilike('description', ilikePattern);
       }
 
       const { data, error } = await query;
@@ -89,6 +91,38 @@ export function useUpdateTransactionCategory() {
   });
 }
 
+export function useExcludeTransaction() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      transactionId,
+      reason,
+      excluded,
+    }: {
+      transactionId: string;
+      reason?: string;
+      excluded: boolean;
+    }) => {
+      const { error } = await supabase
+        .from('transactions')
+        .update({
+          is_excluded: excluded,
+          exclude_reason: excluded ? (reason ?? '') : null,
+          ...(excluded && { category_id: null }),
+        })
+        .eq('id', transactionId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions_uncategorized'] });
+      queryClient.invalidateQueries({ queryKey: ['category_totals'] });
+      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    },
+  });
+}
+
 export function useBulkUpdateCategories() {
   const queryClient = useQueryClient();
 
@@ -122,14 +156,29 @@ export function useUncategorizedTransactions() {
     queryKey: ['transactions_uncategorized', user?.id],
     enabled: !!user,
     queryFn: async (): Promise<Transaction[]> => {
-      const { data, error } = await supabase
+      // Look up the "Uncategorized" category ID to also catch legacy rows
+      // that were stored with the UUID instead of NULL before the fix
+      const { data: uncatCat } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('name', 'Uncategorized')
+        .maybeSingle();
+
+      let query = supabase
         .from('transactions')
         .select('*, account:accounts(id,name,type,institution), category:categories(id,name,icon,color)')
         .eq('user_id', user!.id)
         .eq('is_excluded', false)
-        .is('category_id', null)
         .order('date', { ascending: false })
         .limit(200);
+
+      if (uncatCat?.id) {
+        query = query.or(`category_id.is.null,category_id.eq.${uncatCat.id}`);
+      } else {
+        query = query.is('category_id', null);
+      }
+
+      const { data, error } = await query;
       if (error) throw error;
       return (data ?? []) as unknown as Transaction[];
     },

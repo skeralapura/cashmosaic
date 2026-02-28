@@ -42,6 +42,8 @@ export interface Category {
   color: string;
   is_expense: boolean;
   sort_order: number;
+  parent_id: string | null; // null = top-level global category
+  user_id: string | null;   // null = global/system category
 }
 
 export interface CategoryRule {

@@ -7,6 +7,7 @@ import { UploadProgress } from '@/components/upload/UploadProgress';
 import { UncategorizedReview } from '@/components/categorization/UncategorizedReview';
 import { useUpload } from '@/hooks/useUpload';
 import { useCategories } from '@/hooks/useCategories';
+import { Spinner } from '@/components/ui/Spinner';
 import { clsx } from 'clsx';
 
 const STEPS = [
@@ -20,7 +21,7 @@ const STEPS = [
 const stepIndex = (step: string) => STEPS.findIndex(s => s.id === step);
 
 export function UploadPage() {
-  const { state, handleFileSelect, handleMappingConfirm, handleImport, reset } = useUpload();
+  const { state, handleFileSelect, handleMappingConfirm, handleImport, reset, updateState } = useUpload();
   const { data: categories = [] } = useCategories();
 
   // Build a simple id->category map for preview
@@ -90,12 +91,19 @@ export function UploadPage() {
           />
         )}
 
+        {state.step === 'preview' && !state.preview && (
+          <div className="card p-8 flex flex-col items-center gap-3">
+            <Spinner size="lg" />
+            <p className="text-slate-400 text-sm">Analyzing transactions…</p>
+          </div>
+        )}
+
         {state.step === 'preview' && state.preview && (
           <PreviewTable
             preview={state.preview}
             categories={catDisplay}
             onConfirm={handleImport}
-            onBack={() => {}}
+            onBack={() => updateState({ step: 'mapping', preview: null, error: null })}
           />
         )}
 

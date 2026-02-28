@@ -14,10 +14,11 @@ export function categorize(
   categoryNameToId: Record<string, string>, // category name -> id map
   originalCategory?: string
 ): string | null {
-  const upper = description.toUpperCase();
+  // Normalize whitespace so "APA  TREAS  310" matches a rule keyword "APA TREAS 310"
+  const upper = description.replace(/\s+/g, ' ').toUpperCase();
 
   for (const rule of categoryRules) {
-    if (upper.includes(rule.keyword.toUpperCase())) {
+    if (upper.includes(rule.keyword.replace(/\s+/g, ' ').toUpperCase())) {
       return rule.category_id;
     }
   }
@@ -30,8 +31,8 @@ export function categorize(
     }
   }
 
-  // Return Uncategorized category ID
-  return categoryNameToId['Uncategorized'] ?? null;
+  // Return null — NULL is the signal for "needs categorization"
+  return null;
 }
 
 // Build a sorted rules list for the categorizer

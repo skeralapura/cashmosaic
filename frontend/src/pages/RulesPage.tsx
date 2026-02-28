@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { AppShell } from '@/components/layout/AppShell';
 import { useCategoryRules, useCreateRule, useDeleteRule } from '@/hooks/useCategoryRules';
-import { useCategories } from '@/hooks/useCategories';
+import { useCategories, useCreateUserCategory, useDeleteUserCategory } from '@/hooks/useCategories';
 import { useToast } from '@/components/ui/Toast';
 import { Spinner } from '@/components/ui/Spinner';
 import { Badge } from '@/components/ui/Badge';
+import { useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
 import type { CategoryRule } from '@/lib/types';
 
 export function RulesPage() {
@@ -12,24 +14,91 @@ export function RulesPage() {
   const { data: categories = [] } = useCategories();
   const createRule = useCreateRule();
   const deleteRule = useDeleteRule();
+  const createSubCategory = useCreateUserCategory();
+  const deleteSubCategory = useDeleteUserCategory();
   const { showToast } = useToast();
 
   const [newKeyword, setNewKeyword] = useState('');
   const [newCategoryId, setNewCategoryId] = useState('');
+  const [applyToExisting, setApplyToExisting] = useState(true);
   const [filterCategory, setFilterCategory] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
+  // Sub-category form state
+  const [subName, setSubName] = useState('');
+  const [subIcon, setSubIcon] = useState('');
+  const [subColor, setSubColor] = useState('#6366f1');
+  const [subParentId, setSubParentId] = useState('');
+
   const categoryMap = Object.fromEntries(categories.map(c => [c.id, c]));
+  const queryClient = useQueryClient();
+
+  // Top-level (global) parent categories only
+  const parentCategories = categories.filter(c => c.parent_id === null);
+  // User's own sub-categories
+  const userSubCategories = categories.filter(c => c.user_id !== null);
+
+  const applyKeywordToTransactions = async (kw: string, categoryId: string): Promise<string> => {
+    // Replace spaces with % so "APA TREAS 310" matches "APA  TREAS  310..." (multiple spaces in DB)
+    const ilikePattern = '%' + kw.split(/\s+/).join('%') + '%';
+    const { data: matches, error: selectErr } = await supabase
+      .from('transactions')
+      .select('id')
+      .ilike('description', ilikePattern)
+      .limit(10000);
+    if (selectErr) throw new Error(`SELECT error: ${selectErr.message}`);
+
+    const rows = matches ?? [];
+    if (rows.length === 0) {
+      return '0 matching transactions found';
+    }
+
+    const ids = rows.map((r: { id: string }) => r.id);
+    const { error: updateErr } = await supabase
+      .from('transactions')
+      .update({ category_id: categoryId })
+      .in('id', ids);
+    if (updateErr) throw new Error(`UPDATE error: ${updateErr.message}`);
+
+    queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    queryClient.invalidateQueries({ queryKey: ['transactions_uncategorized'] });
+    queryClient.invalidateQueries({ queryKey: ['category_totals'] });
+    queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+    return `${ids.length} existing transactions updated`;
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newKeyword.trim() || !newCategoryId) return;
+    const kw = newKeyword.trim().toUpperCase();
+    if (!kw || !newCategoryId) return;
+
+    // Try rule creation (upsert — requires migration 004 unique index)
+    let ruleOk = false;
+    let ruleMsg = '';
     try {
-      await createRule.mutateAsync({ categoryId: newCategoryId, keyword: newKeyword.trim().toUpperCase() });
-      showToast({ type: 'success', title: 'Rule created' });
+      await createRule.mutateAsync({ categoryId: newCategoryId, keyword: kw });
+      ruleOk = true;
+    } catch (err) {
+      ruleMsg = (err as Error).message;
+    }
+
+    // Bulk update runs regardless of rule creation result
+    // No user check needed — RLS on transactions enforces isolation
+    let applyMsg = '';
+    if (applyToExisting) {
+      try {
+        applyMsg = await applyKeywordToTransactions(kw, newCategoryId);
+      } catch (err) {
+        applyMsg = `Update error: ${(err as Error).message}`;
+      }
+    }
+
+    const applyDetail = applyMsg || (applyToExisting ? '0 matching transactions' : 'Not applied to existing');
+    if (ruleOk) {
+      showToast({ type: 'success', title: 'Rule created', message: applyDetail });
       setNewKeyword('');
-    } catch {
-      showToast({ type: 'error', title: 'Failed to create rule' });
+    } else {
+      showToast({ type: 'warning', title: 'Rule not saved', message: `${ruleMsg} · ${applyDetail}` });
     }
   };
 
@@ -40,6 +109,39 @@ export function RulesPage() {
       showToast({ type: 'success', title: 'Rule deleted' });
     } catch {
       showToast({ type: 'error', title: 'Failed to delete rule' });
+    }
+  };
+
+  const handleCreateSubCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const name = subName.trim();
+    if (!name || !subParentId) return;
+    const parent = categoryMap[subParentId];
+    try {
+      await createSubCategory.mutateAsync({
+        name,
+        icon: subIcon || parent?.icon || '📂',
+        color: subColor,
+        parentId: subParentId,
+        isExpense: parent?.is_expense ?? true,
+      });
+      showToast({ type: 'success', title: 'Sub-category created', message: `${name} added under ${parent?.name}` });
+      setSubName('');
+      setSubIcon('');
+      setSubColor('#6366f1');
+      setSubParentId('');
+    } catch (err) {
+      showToast({ type: 'error', title: 'Failed to create sub-category', message: (err as Error).message });
+    }
+  };
+
+  const handleDeleteSubCategory = async (id: string, name: string) => {
+    if (!confirm(`Delete sub-category "${name}"? Transactions assigned to it will lose their category.`)) return;
+    try {
+      await deleteSubCategory.mutateAsync(id);
+      showToast({ type: 'success', title: 'Sub-category deleted' });
+    } catch {
+      showToast({ type: 'error', title: 'Failed to delete sub-category' });
     }
   };
 
@@ -65,38 +167,49 @@ export function RulesPage() {
         {/* Add rule form */}
         <div className="card p-5">
           <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-4">Add New Rule</h2>
-          <form onSubmit={handleCreate} className="flex gap-3 items-end">
-            <div className="flex-1">
-              <label className="label">Keyword (case-insensitive)</label>
-              <input
-                value={newKeyword}
-                onChange={e => setNewKeyword(e.target.value.toUpperCase())}
-                placeholder="e.g. STARBUCKS"
-                className="input font-mono"
-                required
-              />
-            </div>
-            <div className="w-52">
-              <label className="label">Category</label>
-              <select
-                value={newCategoryId}
-                onChange={e => setNewCategoryId(e.target.value)}
-                className="input"
-                required
+          <form onSubmit={handleCreate} className="space-y-3">
+            <div className="flex gap-3 items-end">
+              <div className="flex-1">
+                <label className="label">Keyword (case-insensitive)</label>
+                <input
+                  value={newKeyword}
+                  onChange={e => setNewKeyword(e.target.value.toUpperCase())}
+                  placeholder="e.g. STARBUCKS"
+                  className="input font-mono"
+                  required
+                />
+              </div>
+              <div className="w-52">
+                <label className="label">Category</label>
+                <select
+                  value={newCategoryId}
+                  onChange={e => setNewCategoryId(e.target.value)}
+                  className="input"
+                  required
+                >
+                  <option value="">Select...</option>
+                  {categories.map(c => (
+                    <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                type="submit"
+                disabled={createRule.isPending}
+                className="btn-primary flex-shrink-0"
               >
-                <option value="">Select...</option>
-                {categories.map(c => (
-                  <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
-                ))}
-              </select>
+                {createRule.isPending ? 'Adding...' : '+ Add Rule'}
+              </button>
             </div>
-            <button
-              type="submit"
-              disabled={createRule.isPending}
-              className="btn-primary flex-shrink-0"
-            >
-              {createRule.isPending ? 'Adding...' : '+ Add Rule'}
-            </button>
+            <label className="flex items-center gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={applyToExisting}
+                onChange={e => setApplyToExisting(e.target.checked)}
+                className="w-4 h-4 rounded accent-indigo-500"
+              />
+              <span className="text-sm text-slate-400">Apply to all existing transactions matching this keyword</span>
+            </label>
           </form>
         </div>
 
@@ -118,6 +231,104 @@ export function RulesPage() {
               <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
             ))}
           </select>
+        </div>
+
+        {/* ── Sub-Category Management ─────────────────────────────────────── */}
+        <div className="card p-5">
+          <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wide mb-1">My Sub-Categories</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            Create personal sub-categories under any global category (e.g. Income → Salary, Treasury Dividends).
+          </p>
+
+          {/* Create form */}
+          <form onSubmit={handleCreateSubCategory} className="flex flex-wrap gap-3 items-end mb-5">
+            <div className="w-36">
+              <label className="label">Parent Category</label>
+              <select
+                value={subParentId}
+                onChange={e => setSubParentId(e.target.value)}
+                className="input text-sm"
+                required
+              >
+                <option value="">Select parent...</option>
+                {parentCategories.map(c => (
+                  <option key={c.id} value={c.id}>{c.icon} {c.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1 min-w-36">
+              <label className="label">Sub-Category Name</label>
+              <input
+                value={subName}
+                onChange={e => setSubName(e.target.value)}
+                placeholder="e.g. Salary"
+                className="input text-sm"
+                required
+              />
+            </div>
+            <div className="w-24">
+              <label className="label">Icon (emoji)</label>
+              <input
+                value={subIcon}
+                onChange={e => setSubIcon(e.target.value)}
+                placeholder="💼"
+                className="input text-sm text-center"
+                maxLength={4}
+              />
+            </div>
+            <div className="w-24">
+              <label className="label">Color</label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={subColor}
+                  onChange={e => setSubColor(e.target.value)}
+                  className="h-9 w-10 rounded cursor-pointer bg-transparent border border-slate-600 p-0.5"
+                />
+                <span className="text-xs text-slate-500 font-mono">{subColor}</span>
+              </div>
+            </div>
+            <button
+              type="submit"
+              disabled={createSubCategory.isPending}
+              className="btn-primary flex-shrink-0"
+            >
+              {createSubCategory.isPending ? 'Adding...' : '+ Add Sub-Category'}
+            </button>
+          </form>
+
+          {/* List of user sub-categories */}
+          {userSubCategories.length === 0 ? (
+            <p className="text-sm text-slate-500">No sub-categories yet.</p>
+          ) : (
+            <div className="divide-y divide-slate-700/50 rounded-lg overflow-hidden border border-slate-700">
+              {userSubCategories.map(sub => {
+                const parent = categoryMap[sub.parent_id ?? ''];
+                return (
+                  <div key={sub.id} className="flex items-center gap-3 px-4 py-2.5 table-row-hover">
+                    {parent && (
+                      <span className="text-xs text-slate-500 flex-shrink-0">
+                        {parent.icon} {parent.name} ›
+                      </span>
+                    )}
+                    <span
+                      className="badge text-xs flex-shrink-0"
+                      style={{ backgroundColor: `${sub.color}22`, color: sub.color }}
+                    >
+                      {sub.icon} {sub.name}
+                    </span>
+                    <span className="text-xs text-slate-600 flex-1">personal</span>
+                    <button
+                      onClick={() => handleDeleteSubCategory(sub.id, sub.name)}
+                      className="text-xs text-slate-600 hover:text-red-400 transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {isLoading ? (

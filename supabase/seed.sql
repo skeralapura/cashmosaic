@@ -27,7 +27,7 @@ INSERT INTO categories (name, icon, color, is_expense, sort_order) VALUES
   ('Fees',               '🏦', '#78716C', true,  17),
   ('Income',             '💰', '#22C55E', false, 18),
   ('Uncategorized',      '❓', '#94A3B8', true,  19)
-ON CONFLICT (name) DO UPDATE SET
+ON CONFLICT (name) WHERE user_id IS NULL DO UPDATE SET
   icon       = EXCLUDED.icon,
   color      = EXCLUDED.color,
   is_expense = EXCLUDED.is_expense,

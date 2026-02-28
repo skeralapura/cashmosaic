@@ -55,14 +55,18 @@ export function useCreateRule() {
       keyword: string;
       priority?: number;
     }) => {
+      // Upsert: if same (user_id, keyword) exists, update category instead of creating duplicate
       const { data, error } = await supabase
         .from('category_rules')
-        .insert({
-          user_id: user!.id,
-          category_id: categoryId,
-          keyword: keyword.trim(),
-          priority,
-        })
+        .upsert(
+          {
+            user_id: user!.id,
+            category_id: categoryId,
+            keyword: keyword.trim().toUpperCase(),
+            priority,
+          },
+          { onConflict: 'user_id,keyword' }
+        )
         .select()
         .single();
       if (error) throw error;

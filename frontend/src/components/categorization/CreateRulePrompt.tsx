@@ -3,6 +3,8 @@ import { Modal } from '@/components/ui/Modal';
 import { useCreateRule } from '@/hooks/useCategoryRules';
 import { useCategories } from '@/hooks/useCategories';
 import { useToast } from '@/components/ui/Toast';
+import { useQueryClient } from '@tanstack/react-query';
+import { supabase } from '@/lib/supabase';
 
 interface CreateRulePromptProps {
   open: boolean;
@@ -18,19 +20,70 @@ export function CreateRulePrompt({ open, onClose, description, categoryId, categ
     return description.split(/\s+/).slice(0, 3).join(' ').toUpperCase();
   });
   const [selectedCategoryId, setSelectedCategoryId] = useState(categoryId);
+  const [applyToExisting, setApplyToExisting] = useState(true);
   const { data: categories = [] } = useCategories();
   const createRule = useCreateRule();
   const { showToast } = useToast();
+  const queryClient = useQueryClient();
+
+  const selectedCategory = categories.find(c => c.id === selectedCategoryId);
 
   const handleCreate = async () => {
     if (!keyword.trim()) return;
+
+    // Try rule creation (upsert — requires migration 004 unique index)
+    let ruleOk = false;
     try {
       await createRule.mutateAsync({ categoryId: selectedCategoryId, keyword: keyword.trim() });
-      showToast({ type: 'success', title: 'Rule created', message: `"${keyword.trim()}" → ${categoryName}` });
-      onClose();
+      ruleOk = true;
     } catch {
-      showToast({ type: 'error', title: 'Failed to create rule' });
+      // Rule creation failed (e.g. missing DB index) — still proceed with bulk update
     }
+
+    // Bulk update — runs regardless of rule creation result (RLS enforces user isolation)
+    let applyNote = applyToExisting ? '' : 'Not applied to existing transactions';
+    if (applyToExisting) {
+      try {
+        // Replace spaces with % so "APA TREAS 310" matches "APA  TREAS  310..." (multiple spaces in DB)
+        const ilikePattern = '%' + keyword.trim().split(/\s+/).join('%') + '%';
+        const { data: matches, error: selectErr } = await supabase
+          .from('transactions')
+          .select('id')
+          .ilike('description', ilikePattern)
+          .limit(10000);
+        if (selectErr) {
+          applyNote = `Find error: ${selectErr.message}`;
+        } else {
+          const ids = (matches ?? []).map((r: { id: string }) => r.id);
+          if (ids.length === 0) {
+            applyNote = `0 matching transactions found`;
+          } else {
+            const { error: updateErr } = await supabase
+              .from('transactions')
+              .update({ category_id: selectedCategoryId })
+              .in('id', ids);
+            if (updateErr) {
+              applyNote = `Update error: ${updateErr.message}`;
+            } else {
+              applyNote = `${ids.length} existing transactions updated`;
+              queryClient.invalidateQueries({ queryKey: ['transactions'] });
+              queryClient.invalidateQueries({ queryKey: ['transactions_uncategorized'] });
+              queryClient.invalidateQueries({ queryKey: ['category_totals'] });
+              queryClient.invalidateQueries({ queryKey: ['dashboard'] });
+            }
+          }
+        }
+      } catch (err) {
+        applyNote = `Error: ${(err as Error).message}`;
+      }
+    }
+
+    showToast({
+      type: ruleOk ? 'success' : 'warning',
+      title: ruleOk ? 'Rule created' : 'Rule not saved — run migration 004',
+      message: `"${keyword.trim()}" → ${selectedCategory?.name ?? categoryName} · ${applyNote}`,
+    });
+    onClose();
   };
 
   return (
@@ -76,6 +129,15 @@ export function CreateRulePrompt({ open, onClose, description, categoryId, categ
             ))}
           </select>
         </div>
+        <label className="flex items-center gap-2.5 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={applyToExisting}
+            onChange={e => setApplyToExisting(e.target.checked)}
+            className="w-4 h-4 rounded accent-indigo-500"
+          />
+          <span className="text-sm text-slate-300">Apply to all existing transactions matching this keyword</span>
+        </label>
       </div>
     </Modal>
   );

@@ -9,7 +9,7 @@ import type { AutoDetectResult, DetectionConfidence, AmountColumnType } from './
 
 // Header keyword hints (case-insensitive match)
 const DATE_HINTS = ['date', 'posting date', 'transaction date', 'post date', 'trans date', 'value date'];
-const DESC_HINTS = ['description', 'memo', 'merchant', 'details', 'name', 'narrative', 'payee', 'reference'];
+const DESC_HINTS = ['description', 'memo', 'merchant', 'narrative', 'payee', 'reference', 'name'];
 const AMOUNT_HINTS = ['amount', 'amt', 'transaction amount'];
 const DEBIT_HINTS = ['debit', 'charge', 'withdrawal', 'dr', 'debit amount'];
 const CREDIT_HINTS = ['credit', 'deposit', 'payment', 'cr', 'credit amount'];
