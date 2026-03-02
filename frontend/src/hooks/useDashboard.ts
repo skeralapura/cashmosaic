@@ -1,19 +1,4 @@
 import { useQuery } from '@tanstack/react-query';
-
-export interface CashFlowGroup {
-  name: string;
-  icon: string;
-  color: string;
-  total: number;
-}
-
-export interface CashFlowData {
-  incomes: CashFlowGroup[];
-  expenses: CashFlowGroup[];
-  totalIncome: number;
-  totalExpenses: number;
-  savings: number;
-}
 import { supabase } from '@/lib/supabase';
 import type { DashboardStats, MonthlySummary, CategoryTotal } from '@/lib/types';
 import { useAuthContext } from '@/context/AuthContext';
@@ -112,66 +97,40 @@ export function useCategoryTotals() {
   });
 }
 
-export function useCashFlowData() {
+export function useDailyExpenses() {
   const { user } = useAuthContext();
   const { dateRange } = useDateRange();
 
   return useQuery({
-    queryKey: ['cashflow', user?.id, dateRange.startDate, dateRange.endDate],
+    queryKey: ['daily_expenses', user?.id, dateRange.startDate, dateRange.endDate],
     enabled: !!user,
-    queryFn: async (): Promise<CashFlowData> => {
-      // Fetch all categories so we can resolve parent info for sub-categories
-      const { data: allCats, error: catErr } = await supabase
-        .from('categories')
-        .select('id, name, icon, color, parent_id');
-      if (catErr) throw catErr;
-
-      type CatRow = { id: string; name: string; icon: string; color: string; parent_id: string | null };
-      const catById = new Map<string, CatRow>(
-        (allCats ?? []).map((c: CatRow) => [c.id, c])
-      );
-
-      // Roll a sub-category up to its parent for the Sankey macro view
-      const effectiveCat = (cat: CatRow): CatRow => {
-        if (cat.parent_id) {
-          const parent = catById.get(cat.parent_id);
-          if (parent) return parent;
-        }
-        return cat;
-      };
-
+    queryFn: async (): Promise<{ date: string; total: number; count: number }[]> => {
       const { data, error } = await supabase
         .from('transactions')
-        .select('amount, category:categories(id, name, icon, color, parent_id)')
+        .select('date, amount')
         .eq('user_id', user!.id)
         .eq('is_excluded', false)
+        .lt('amount', 0)
         .gte('date', dateRange.startDate)
         .lte('date', dateRange.endDate);
       if (error) throw error;
 
-      const incomeMap = new Map<string, CashFlowGroup>();
-      const expenseMap = new Map<string, CashFlowGroup>();
-
+      const dayMap = new Map<string, { total: number; count: number }>();
       for (const tx of data ?? []) {
-        const cat = tx.category as CatRow | null;
-        if (!cat || cat.name === 'Uncategorized') continue;
-        const eff = effectiveCat(cat);
-        if (eff.name === 'Uncategorized') continue;
         const abs = Math.abs(tx.amount as number);
-        const map = (tx.amount as number) > 0 ? incomeMap : expenseMap;
-        const existing = map.get(eff.id);
+        const key = tx.date as string;
+        const existing = dayMap.get(key);
         if (existing) {
           existing.total += abs;
+          existing.count += 1;
         } else {
-          map.set(eff.id, { name: eff.name, icon: eff.icon, color: eff.color, total: abs });
+          dayMap.set(key, { total: abs, count: 1 });
         }
       }
 
-      const incomes = Array.from(incomeMap.values()).sort((a, b) => b.total - a.total);
-      const expenses = Array.from(expenseMap.values()).sort((a, b) => b.total - a.total);
-      const totalIncome = incomes.reduce((s, i) => s + i.total, 0);
-      const totalExpenses = expenses.reduce((s, e) => s + e.total, 0);
-      return { incomes, expenses, totalIncome, totalExpenses, savings: totalIncome - totalExpenses };
+      return Array.from(dayMap.entries())
+        .map(([date, { total, count }]) => ({ date, total, count }))
+        .sort((a, b) => a.date.localeCompare(b.date));
     },
   });
 }

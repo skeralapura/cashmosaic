@@ -4,7 +4,7 @@ import { IncomeExpenseChart } from '@/components/dashboard/IncomeExpenseChart';
 import { CategoryDonut } from '@/components/dashboard/CategoryDonut';
 import { TrendsChart } from '@/components/dashboard/TrendsChart';
 import { RecentTransactions } from '@/components/dashboard/RecentTransactions';
-import { CashFlowSankey } from '@/components/dashboard/CashFlowSankey';
+import { ExpenseHeatmap } from '@/components/dashboard/ExpenseHeatmap';
 import { useDashboardStats, useMonthlySummary, useCategoryTotals } from '@/hooks/useDashboard';
 import { Spinner } from '@/components/ui/Spinner';
 
@@ -88,8 +88,8 @@ export function DashboardPage() {
           <RecentTransactions />
         </div>
 
-        {/* Cash Flow Sankey */}
-        <CashFlowSankey />
+        {/* Expense Heatmap */}
+        <ExpenseHeatmap />
       </div>
     </AppShell>
   );
