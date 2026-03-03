@@ -24,7 +24,7 @@ A self-hosted personal finance dashboard. Upload CSV exports from any bank, auto
 - Income vs Expenses bar chart (monthly)
 - Spending by Category donut (click to filter transactions)
 - Cumulative savings trends line chart
-- Cash Flow Sankey diagram — income sources → expense categories
+- Daily Expense Heatmap — GitHub-style calendar view, color-coded green → red by spend intensity
 - Recent transactions widget
 
 **Transactions**
@@ -49,7 +49,7 @@ A self-hosted personal finance dashboard. Upload CSV exports from any bank, auto
 |---|---|
 | Frontend | React 18, Vite, TypeScript |
 | Styling | Tailwind CSS v3 (dark theme) |
-| Charts | Recharts + d3-sankey |
+| Charts | Recharts |
 | State | TanStack Query v5 |
 | Forms | React Hook Form |
 | CSV | PapaParse |
@@ -98,7 +98,7 @@ cashmosaic/
 ├── frontend/
 │   └── src/
 │       ├── components/
-│       │   ├── dashboard/       # KPICard, charts, Sankey, RecentTransactions
+│       │   ├── dashboard/       # KPICard, charts, ExpenseHeatmap, RecentTransactions
 │       │   ├── upload/          # DropZone, ColumnMapper, PreviewTable, UploadProgress
 │       │   ├── categorization/  # CategoryDropdown, UncategorizedReview, CreateRulePrompt
 │       │   ├── transactions/    # TransactionTable, CategoryBadge, TransactionFilters

@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-CashMosaic is a browser-based personal finance dashboard. Users upload CSV exports from their banks, the app categorizes transactions using a keyword rule engine, and the results are visualized through charts and a cash flow Sankey diagram.
+CashMosaic is a browser-based personal finance dashboard. Users upload CSV exports from their banks, the app categorizes transactions using a keyword rule engine, and the results are visualized through interactive charts including a daily expense heatmap.
 
 The architecture is a **single-page application** backed by **Supabase** (managed Postgres + Auth). There is no custom server — all backend logic runs in Postgres (functions, views, RLS) or in the browser (CSV parsing, categorization, hashing). Supabase Edge Functions are used only for admin user provisioning.
 
@@ -57,7 +57,7 @@ All server data is fetched via custom hooks that wrap `useQuery` / `useMutation`
 useDashboardStats()     → get_dashboard_stats RPC     → KPI cards
 useMonthlySummary()     → monthly_summary view        → bar chart, trends chart
 useCategoryTotals()     → transactions table          → donut chart
-useCashFlowData()       → transactions + categories   → Sankey diagram
+useDailyExpenses()      → transactions table          → expense heatmap
 useTransactions()       → transactions table          → transaction table
 useCategories()         → categories table            → dropdowns, filters
 useCategoryRules()      → category_rules table        → rules page
@@ -287,7 +287,7 @@ Global categories (user_id = NULL, parent_id = NULL)
   └── ... (16 more)
 ```
 
-Sub-categories are user-owned and one level deep. In the **Sankey diagram**, sub-categories are rolled up to their parent for a clean macro view (Income → Expenses). In the **transaction table** and **donut chart**, transactions retain their leaf category assignment.
+Sub-categories are user-owned and one level deep. In the **transaction table** and **donut chart**, transactions retain their leaf category assignment.
 
 ---
 
@@ -299,8 +299,7 @@ DateRangeContext
       ├──→ useDashboardStats()   → get_dashboard_stats RPC  → KPI cards
       ├──→ useMonthlySummary()   → monthly_summary view     → bar chart + trends
       ├──→ useCategoryTotals()   → transactions table       → donut chart
-      └──→ useCashFlowData()     → transactions + categories (with sub-cat rollup)
-                                 → Sankey diagram
+      └──→ useDailyExpenses()    → transactions table          → expense heatmap
 ```
 
 All four queries share the same date range and are independently cached by TanStack Query. Changing the date range picker invalidates all four simultaneously.
@@ -316,6 +315,6 @@ All four queries share the same date range and are independently cached by TanSt
 | SHA-256 row hash for dedup | Deterministic across re-uploads; computed client-side via Web Crypto API |
 | Global categories are system-owned (`user_id = NULL`) | Single shared taxonomy; no per-user category UUIDs in foreign keys |
 | Two-tier rules at priority levels (5 vs 0) | User rules naturally override global without custom merge logic |
-| Sub-category rollup in Sankey only | Sankey is a macro view; leaf categories preserved in all other charts |
+| Sub-categories preserved at leaf level | Transaction table and donut chart show the actual assigned sub-category; no rollup needed |
 | `SECURITY DEFINER` on `get_dashboard_stats` | Aggregation function needs to run as owner to avoid per-row RLS overhead |
 | `column_mapping` stored as JSONB in `upload_logs` | Foundation for future "remember my Wells Fargo format" auto-suggest feature |
